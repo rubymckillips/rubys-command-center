@@ -1,0 +1,32 @@
+{
+  "name": "ps3-web-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.js",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "start:server": "node server/index.js",
+    "migrate": "node server/migrate-cli.js",
+    "seed:local": "node server/seed-cli.js",
+    "test": "vitest run",
+    "test:acceptance": "vitest run tests/acceptance.test.js",
+    "test:restart": "vitest run tests/restart.test.js",
+    "lint": "oxlint client/src server tests vite.config.js"
+  },
+  "dependencies": {
+    "ical.js": "2.2.1",
+    "pg": "^8.16.3",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.7.0",
+    "oxlint": "0.15.10",
+    "vite": "6.4.4",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

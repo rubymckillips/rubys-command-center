@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadEnvironment, serverOptionsFromEnvironment, serverSecurityOptionsFromEnvironment } from '../server/env.js';
 import { startServer, startupDiagnostic } from '../server/index.js';
+const github={GITHUB_CLIENT_ID:'test-client',GITHUB_CLIENT_SECRET:'test-secret',OWNER_GITHUB_ID:'100',GITHUB_REDIRECT_URI:'https://frontend.example.test/api/auth/github/callback'};
 
 describe('local environment setup', () => {
   const temporaryDirectories = [];
@@ -36,24 +37,24 @@ describe('local environment setup', () => {
 
   it('fails closed on incomplete production authentication or commit before opening a database', async () => {
     await expect(startServer({ environment: { NODE_ENV: 'production', DATABASE_URL: 'postgresql://invalid' } }))
-      .rejects.toThrow(/BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD are required/);
+      .rejects.toThrow(/GitHub/);
     await expect(startServer({ environment: {
-      NODE_ENV: 'production', DATABASE_URL: 'postgresql://invalid', BASIC_AUTH_USERNAME: 'deploy',
+      ...github, NODE_ENV: 'production', DATABASE_URL: 'postgresql://invalid', BASIC_AUTH_USERNAME: 'deploy',
       BASIC_AUTH_PASSWORD: 'secret', FRONTEND_ORIGIN: 'https://frontend.example.test',
     } })).rejects.toThrow(/full RENDER_GIT_COMMIT/);
     expect(() => serverSecurityOptionsFromEnvironment({
-      NODE_ENV: 'production', BASIC_AUTH_USERNAME: 'deploy', BASIC_AUTH_PASSWORD: 'secret', FRONTEND_ORIGIN: 'https://frontend.example.test',
+      ...github, NODE_ENV: 'production', BASIC_AUTH_USERNAME: 'deploy', BASIC_AUTH_PASSWORD: 'secret', FRONTEND_ORIGIN: 'https://frontend.example.test',
     })).toThrow(/full RENDER_GIT_COMMIT/);
     expect(() => serverSecurityOptionsFromEnvironment({
       NODE_ENV: 'production', BASIC_AUTH_USERNAME: 'bad:name', BASIC_AUTH_PASSWORD: 'secret',
       FRONTEND_ORIGIN: 'https://frontend.example.test', RENDER_GIT_COMMIT: 'f'.repeat(40),
-    })).toThrow(/BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD are required/);
+    })).toThrow(/GitHub/);
     expect(serverSecurityOptionsFromEnvironment({
-      NODE_ENV: 'production', BASIC_AUTH_USERNAME: 'deploy', BASIC_AUTH_PASSWORD: 'secret',
+      ...github, NODE_ENV: 'production', BASIC_AUTH_USERNAME: 'deploy', BASIC_AUTH_PASSWORD: 'secret',
       FRONTEND_ORIGIN: 'https://frontend.example.test', RENDER_GIT_COMMIT: 'f'.repeat(40),
-    })).toMatchObject({ auth: { username: 'deploy', password: 'secret' }, commit: 'f'.repeat(40) });
+    })).toMatchObject({ auth: undefined, oauth:{ownerGithubId:'100'}, commit: 'f'.repeat(40) });
     await expect(startServer({ environment: {
-      NODE_ENV: 'production', DATABASE_URL: 'postgresql://invalid', BASIC_AUTH_USERNAME: 'deploy',
+      ...github, NODE_ENV: 'production', DATABASE_URL: 'postgresql://invalid', BASIC_AUTH_USERNAME: 'deploy',
       BASIC_AUTH_PASSWORD: 'secret', RENDER_GIT_COMMIT: 'f'.repeat(40),
     } })).rejects.toThrow(/FRONTEND_ORIGIN is required/);
     expect(serverSecurityOptionsFromEnvironment({ NODE_ENV: 'development' }).frontendOrigin).toBe('http://localhost:5173');

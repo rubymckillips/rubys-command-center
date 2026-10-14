@@ -1,5 +1,5 @@
 const allowedMethods = ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'];
-const allowedHeaders = ['content-type', 'authorization'];
+const allowedHeaders = ['content-type', 'authorization', 'x-csrf-token'];
 
 export function applyCors(request, response, { frontendOrigin } = {}) {
   response.setHeader('Vary', 'Origin');
@@ -12,7 +12,7 @@ export function applyCors(request, response, { frontendOrigin } = {}) {
     }
     response.setHeader('Access-Control-Allow-Origin', frontendOrigin);
     response.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
-    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
   }
 
   if (request.method !== 'OPTIONS' || request.headers['access-control-request-method'] === undefined) return false;

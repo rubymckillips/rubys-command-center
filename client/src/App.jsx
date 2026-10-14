@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as api from './api.js';
 import ClassGroup from './components/ClassGroup.jsx';
 import EntryForm from './components/EntryForm.jsx';
 import EntryList from './components/EntryList.jsx';
 import LoginForm from './components/LoginForm.jsx';
+import Members from './components/Members.jsx';
 import { buildItemPatch } from './lib/itemPatch.js';
 import Sidebar, { sections } from './components/Sidebar.jsx';
 import SyncStatus from './components/SyncStatus.jsx';
 
 const sectionTitles = Object.fromEntries(sections.map((section) => [section.id, section.label]));
 
-function CommandCenter({ onLogout }) {
+function CommandCenter({ onLogout, user }) {
+  const [showMembers,setShowMembers]=useState(false);
   const [currentSection, setCurrentSection] = useState('academics');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -149,10 +151,13 @@ function CommandCenter({ onLogout }) {
             <p className="section-summary">{currentSection === 'today' ? 'Your focused list for today.' : currentSection === 'calendar' ? 'Calendar entries, grouped by date, with your local notes.' : `Everything in ${title}.`}</p>
           </div>
           <div className="header-actions">
+            <span>{user.login} · {user.role}</span>
+            {user.role==='owner'&&<button type="button" onClick={()=>setShowMembers(!showMembers)}>{showMembers?'Close members':'Members'}</button>}
             <button type="button" className="logout-button" onClick={onLogout}>Log out</button>
             <SyncStatus status={syncState.status} error={syncState.error} onSync={handleSync} disabled={import.meta.env.PROD} />
           </div>
         </header>
+        {showMembers&&user.role==='owner'&&<Members/>}
         {loadError && <div className="notice notice-error" role="alert">Could not load {title}: {loadError.message}</div>}
         {mutationError && <div className="notice notice-error" role="alert">Could not save this change: {mutationError.message}</div>}
         <div className="items-panel" aria-live="polite">
@@ -171,51 +176,18 @@ function CommandCenter({ onLogout }) {
 }
 
 export default function App() {
-  const [signedIn, setSignedIn] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [loginError, setLoginError] = useState('');
-  const signedInRef = useRef(false);
-  const signInAttempt = useRef(0);
-
-  useEffect(() => api.setUnauthorizedHandler(() => {
-    if (signedInRef.current) {
-      signedInRef.current = false;
-      setSignedIn(false);
-      setPending(false);
-      setLoginError('Your sign-in has expired. Please sign in again.');
-    }
-  }), []);
-
-  async function signIn({ username, password }) {
-    const attempt = ++signInAttempt.current;
-    setPending(true);
-    setLoginError('');
-    const generation = api.setCredentials(username, password);
-    try {
-      await api.checkHealth();
-      if (attempt === signInAttempt.current && api.credentialGeneration() === generation) {
-        signedInRef.current = true;
-        setSignedIn(true);
-      }
-    } catch (error) {
-      if (attempt === signInAttempt.current) {
-        if (api.credentialGeneration() === generation) api.clearCredentialsIfGeneration(generation);
-        const wasUnauthorized = error.code === 'unauthorized' && api.credentialGeneration() === generation + 1;
-        setLoginError(wasUnauthorized ? 'Those sign-in details were not accepted.' : error.message);
-      }
-    } finally {
-      if (attempt === signInAttempt.current) setPending(false);
-    }
+  const [user,setUser]=useState(null),[pending,setPending]=useState(true),[loginError,setLoginError]=useState('');
+  useEffect(()=>{
+    let active=true;
+    const clear=api.setUnauthorizedHandler(()=>{if(active)setUser(null);});
+    const failed=new URLSearchParams(window.location.search).get('signin')==='failed';
+    if(failed){setLoginError('GitHub sign-in could not be completed. Please try again.');window.history.replaceState({},'',window.location.pathname);}
+    api.session().then(result=>{if(active)setUser(result.user);}).catch(error=>{if(active&&error.code!=='unauthorized')setLoginError(error.message);}).finally(()=>{if(active)setPending(false);});
+    return()=>{active=false;clear();};
+  },[]);
+  async function signOut(){
+    try{await api.logout();setUser(null);setLoginError('');}catch(error){setLoginError(error.message);}
   }
-
-  function signOut() {
-    signInAttempt.current += 1;
-    signedInRef.current = false;
-    api.clearCredentials();
-    setSignedIn(false);
-    setLoginError('');
-  }
-
-  if (!signedIn) return <LoginForm onSubmit={signIn} pending={pending} error={loginError} />;
-  return <CommandCenter onLogout={signOut} />;
+  if(!user)return <LoginForm pending={pending} error={loginError}/>;
+  return <>{loginError&&<p className="notice notice-error" role="alert">{loginError}</p>}<CommandCenter onLogout={signOut} user={user}/></>;
 }

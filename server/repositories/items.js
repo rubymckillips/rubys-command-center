@@ -34,16 +34,17 @@ async function lockMutation(client) {
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['items:mutation']);
 }
 
-async function nextPosition(client, section, today = false) {
+async function nextPosition(client, section, today = false, workspaceId = 'legacy') {
   const result = today
-    ? await client.query('SELECT COALESCE(MAX(today_position), -1) + 1 AS next FROM items WHERE in_today = TRUE AND archived = FALSE')
-    : await client.query('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM items WHERE section = $1 AND archived = FALSE', [section]);
+    ? await client.query('SELECT COALESCE(MAX(today_position), -1) + 1 AS next FROM items WHERE workspace_id=$1 AND in_today = TRUE AND archived = FALSE',[workspaceId])
+    : await client.query('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM items WHERE workspace_id=$2 AND section = $1 AND archived = FALSE', [section,workspaceId]);
   return result.rows[0].next;
 }
 
-export function createItemsRepository(pool, activityRepository = createActivityRepository(pool)) {
+export function createItemsRepository(pool, activityRepository, workspaceId = 'legacy') {
+  activityRepository ??= createActivityRepository(pool,workspaceId);
   async function findById(client, id, { forUpdate = false } = {}) {
-    const result = await client.query(`SELECT ${columns} FROM items WHERE id = $1${forUpdate ? ' FOR UPDATE' : ''}`, [id]);
+    const result = await client.query(`SELECT ${columns} FROM items WHERE id = $1 AND workspace_id=$2${forUpdate ? ' FOR UPDATE' : ''}`, [id,workspaceId]);
     return normalize(result.rows[0]);
   }
 
@@ -55,27 +56,27 @@ export function createItemsRepository(pool, activityRepository = createActivityR
     const id = input.id || randomUUID();
     const now = new Date().toISOString();
     const inToday = Boolean(input.inToday ?? input.in_today);
-    const position = input.position ?? await nextPosition(client, input.section);
-    const todayPosition = inToday ? (input.todayPosition ?? await nextPosition(client, null, true)) : null;
+    const position = input.position ?? await nextPosition(client, input.section,false,workspaceId);
+    const todayPosition = inToday ? (input.todayPosition ?? await nextPosition(client, null, true,workspaceId)) : null;
     await client.query(`
       INSERT INTO items (id, kind, section, title, notes, due_at, completed, position,
         today_position, in_today, source, source_id, source_url, class_name, source_details,
-        external_url, sync_state, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
+        external_url, sync_state, created_at, updated_at, workspace_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$19)
     `, [id, input.kind || 'local', input.section, input.title, input.notes ?? null,
       input.dueAt ?? input.due_at ?? null, Boolean(input.completed), position, todayPosition, inToday,
       input.source ?? null, input.sourceId ?? input.source_id ?? null,
       input.sourceUrl ?? input.source_url ?? null, input.className ?? input.class_name ?? null,
       input.sourceDetails ?? input.source_details ?? null, input.externalUrl ?? input.external_url ?? null,
-      input.syncState ?? input.sync_state ?? 'local', now]);
+      input.syncState ?? input.sync_state ?? 'local', now,workspaceId]);
     return findById(client, id);
   }
 
   return {
     async list({ section, todayOnly = false } = {}) {
       const result = todayOnly
-        ? await pool.query(`SELECT ${columns} FROM items WHERE in_today = TRUE AND archived = FALSE ORDER BY today_position, id`)
-        : await pool.query(`SELECT ${columns} FROM items WHERE section = $1 AND archived = FALSE ORDER BY position, id`, [section]);
+        ? await pool.query(`SELECT ${columns} FROM items WHERE workspace_id=$1 AND in_today = TRUE AND archived = FALSE ORDER BY today_position, id`,[workspaceId])
+        : await pool.query(`SELECT ${columns} FROM items WHERE workspace_id=$2 AND section = $1 AND archived = FALSE ORDER BY position, id`, [section,workspaceId]);
       return result.rows.map(normalize);
     },
 
@@ -121,7 +122,7 @@ export function createItemsRepository(pool, activityRepository = createActivityR
       if (!normalized.source || !normalized.sourceId) throw new Error('source and sourceId are required for a source upsert');
       return withTransaction(pool, async (client) => {
         await lockMutation(client);
-        const existingResult = await client.query(`SELECT ${columns} FROM items WHERE source = $1 AND source_id = $2 FOR UPDATE`, [normalized.source, normalized.sourceId]);
+        const existingResult = await client.query(`SELECT ${columns} FROM items WHERE workspace_id=$3 AND source = $1 AND source_id = $2 FOR UPDATE`, [normalized.source, normalized.sourceId,workspaceId]);
         const existing = normalize(existingResult.rows[0]);
         await lockPositions(client, existing?.section || normalized.section, existing?.inToday || false);
         let item;
@@ -150,8 +151,9 @@ export function createItemsRepository(pool, activityRepository = createActivityR
       const values = [new Date().toISOString(), source];
       const exclusion = ids.length ? ` AND source_id <> ALL($3::text[])` : '';
       if (ids.length) values.push(ids);
+      values.push(workspaceId);
       const result = await pool.query(`UPDATE items SET sync_state = 'stale', updated_at = $1
-        WHERE source = $2 AND source_id IS NOT NULL AND sync_state <> 'stale'${exclusion}`, values);
+        WHERE workspace_id=$${values.length} AND source = $2 AND source_id IS NOT NULL AND sync_state <> 'stale'${exclusion}`, values);
       return result.rowCount;
     },
 
@@ -165,9 +167,9 @@ export function createItemsRepository(pool, activityRepository = createActivityR
           await client.query('UPDATE items SET archived = TRUE, in_today = FALSE, today_position = NULL, updated_at = $1 WHERE id = $2', [new Date().toISOString(), id]);
         } else {
           await client.query('DELETE FROM items WHERE id = $1', [id]);
-          await client.query('UPDATE items SET position = position - 1 WHERE section = $1 AND position > $2 AND archived = FALSE', [item.section, item.position]);
+          await client.query('UPDATE items SET position = position - 1 WHERE workspace_id=$3 AND section = $1 AND position > $2 AND archived = FALSE', [item.section, item.position,workspaceId]);
         }
-        if (item.inToday) await client.query('UPDATE items SET today_position = today_position - 1 WHERE in_today = TRUE AND today_position > $1 AND archived = FALSE', [item.todayPosition]);
+        if (item.inToday) await client.query('UPDATE items SET today_position = today_position - 1 WHERE workspace_id=$2 AND in_today = TRUE AND today_position > $1 AND archived = FALSE', [item.todayPosition,workspaceId]);
         await record(client, id, item.source ? 'archived' : 'deleted', item.section);
         return item.source ? findById(client, id) : item;
       });
@@ -181,10 +183,10 @@ export function createItemsRepository(pool, activityRepository = createActivityR
         await lockPositions(client, item.section, true);
         const now = new Date().toISOString();
         if (included && !item.inToday) {
-          await client.query('UPDATE items SET in_today = TRUE, today_position = $1, updated_at = $2 WHERE id = $3', [await nextPosition(client, null, true), now, id]);
+          await client.query('UPDATE items SET in_today = TRUE, today_position = $1, updated_at = $2 WHERE id = $3', [await nextPosition(client, null, true,workspaceId), now, id]);
         } else if (!included && item.inToday) {
           await client.query('UPDATE items SET in_today = FALSE, today_position = NULL, updated_at = $1 WHERE id = $2', [now, id]);
-          await client.query('UPDATE items SET today_position = today_position - 1 WHERE in_today = TRUE AND today_position > $1 AND archived = FALSE', [item.todayPosition]);
+          await client.query('UPDATE items SET today_position = today_position - 1 WHERE workspace_id=$2 AND in_today = TRUE AND today_position > $1 AND archived = FALSE', [item.todayPosition,workspaceId]);
         }
         await record(client, id, included ? 'today-added' : 'today-removed', item.section);
         return findById(client, id);
@@ -197,8 +199,8 @@ export function createItemsRepository(pool, activityRepository = createActivityR
         await lockMutation(client);
         await lockPositions(client, today ? null : section, today);
         const rowsResult = today
-          ? await client.query(`SELECT ${columns} FROM items WHERE in_today = TRUE AND archived = FALSE ORDER BY today_position, id`)
-          : await client.query(`SELECT ${columns} FROM items WHERE section = $1 AND archived = FALSE ORDER BY position, id`, [section]);
+          ? await client.query(`SELECT ${columns} FROM items WHERE workspace_id=$1 AND in_today = TRUE AND archived = FALSE ORDER BY today_position, id`,[workspaceId])
+          : await client.query(`SELECT ${columns} FROM items WHERE workspace_id=$2 AND section = $1 AND archived = FALSE ORDER BY position, id`, [section,workspaceId]);
         const rows = rowsResult.rows.map(normalize);
         const existingIds = new Set(rows.map(({ id }) => id));
         if (orderedIds.length !== rows.length || new Set(orderedIds).size !== rows.length || orderedIds.some((id) => !existingIds.has(id))) {

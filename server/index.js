@@ -9,6 +9,7 @@ import { openDatabase } from './db.js';
 import { loadEnvironment, serverOptionsFromEnvironment, serverSecurityOptionsFromEnvironment } from './env.js';
 import { migrate } from './migrate.js';
 import { seedLocalItems } from './seed.js';
+import { createIdentityRepository } from './repositories/identity.js';
 
 const appDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 loadEnvironment({ filePath: path.join(appDirectory, '.env') });
@@ -29,6 +30,7 @@ export async function startServer({ port, databaseUrl, databaseOptions, environm
   const database = await startupStep('database_connect', () => openDatabase(connectionString, databaseOptions));
   try {
     await startupStep('migrate', () => migrate(database.pool));
+    if(security.oauth)await startupStep('migrate',()=>createIdentityRepository(database.pool,security.oauth.ownerGithubId).ensureOwner());
     if (seedLocal && environment.NODE_ENV !== 'production') await startupStep('migrate', () => seedLocalItems(database.pool));
   } catch (error) {
     await database.close();
@@ -49,7 +51,7 @@ export async function startServer({ port, databaseUrl, databaseOptions, environm
     }),
   };
   const server = createServer(createApp({
-    pool: database.pool, connectors, auth: serverAuth, frontendOrigin: allowedFrontendOrigin, commit: deployedCommit,
+    pool: database.pool, connectors, auth: security.oauth?undefined:serverAuth, oauth:security.oauth, frontendOrigin: allowedFrontendOrigin, commit: deployedCommit,
   }));
   let closePromise;
   await new Promise((resolve, reject) => {

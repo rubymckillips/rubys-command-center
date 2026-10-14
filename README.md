@@ -15,9 +15,9 @@ npm run start:server
 
 Create a local Postgres username and password, then fill in the ignored `.env` file with distinct `DATABASE_URL` and `TEST_DATABASE_URL` values for the `ps3_dev` and `ps3_test` databases. Set `POSTGRES_USER` and `POSTGRES_PASSWORD` to those locally generated values. The Compose service creates both databases. Server startup applies recorded migrations before accepting requests; it never seeds sample or personal data. To add nonpersonal examples to a local database explicitly, run `npm run seed:local`.
 
-Set `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD` in the ignored `.env` file for local sign-in. Keep those values private. `FRONTEND_ORIGIN` may be left blank locally; the server then allows the Vite origin `http://localhost:5173`. Open the app and enter the local username and password in its sign-in form. The browser holds them in memory only until you refresh or log out.
+Register a GitHub OAuth application with both callbacks listed in `DEPLOY.md`. Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `OWNER_GITHUB_ID`, and the local `GITHUB_REDIRECT_URI` in the ignored `.env` file. Keep the client secret private. `FRONTEND_ORIGIN` may be left blank locally; the server then allows the Vite origin `http://localhost:5173`. Choose **Continue with GitHub** to sign in. Sessions survive refresh; **Log out** revokes the server session. Members have their own private workspaces; the owner can manage membership.
 
-In a second terminal, run `npm run dev` and open [http://localhost:5173](http://localhost:5173). The Vite proxy sends API requests to the backend on port 3000.
+In a second terminal, run `npm run dev` and open [http://localhost:5173](http://localhost:5173). The Vite proxy sends API requests to the backend on port 3000. Leave `VITE_API_BASE_URL` blank so cookies stay same-origin.
 
 The available public scripts are:
 
@@ -51,15 +51,15 @@ Keep production empty and leave both feed variables unset. Production sync is di
 
 ## Hosting preparation
 
-The planned host setup uses Neon for the production Postgres database and Render for the static client and Node API. Sign in to the providers and create the production database separately from local and test databases. In Render, create both services from the private assignments repository, with `ps3` as each service's root directory:
+The host setup uses Neon for the production Postgres database and Render for the static client and Node API. Keep the production database separate from local and test databases. Both Render services use this standalone public repository with a blank root-directory setting:
 
-- Static site: build command `npm ci --include=dev && npm run build`, publish directory `client/dist`, and build setting `VITE_API_BASE_URL` set to the actual backend HTTPS origin.
+- Static site: build command `npm ci --include=dev && npm run build`, publish directory `client/dist`, and build setting `VITE_API_BASE_URL` blank. Add a Rewrite from `/api/*` to the backend HTTPS origin followed by `/api/*`.
 - Node web service: Node version `22`, build command `npm ci --include=dev`, start command `npm run start:server`. Leave the health-check path unset because the health route requires authentication. Set `NODE_ENV` to `production` and `FRONTEND_ORIGIN` to the actual static-site HTTPS origin.
-- Backend secrets: set `DATABASE_URL` using Neon's pooled connection string, and set `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD` in the backend's private environment settings. Render supplies `PORT` and `RENDER_GIT_COMMIT`. Leave optional feed settings unset.
+- Backend settings: set `DATABASE_URL` using Neon's pooled connection string. Set GitHub client ID, client secret, owner identity, and production callback as documented in `DEPLOY.md`. Render supplies `PORT` and `RENDER_GIT_COMMIT`. Leave optional feed settings unset.
 
 For both Render services, choose **After CI Checks Pass** for automatic deploys so every push waits for the repository workflow. Keep the database connection and password values in provider settings, never in this repository or chat. After setup, verify the live URLs, public `/api/version`, unauthenticated 401 response, and sign-in flow before documenting URLs in `DEPLOY.md`.
 
-The temporary Part A access model uses one shared username and password for every app user. Part B will replace it with individual sign-in and server-enforced roles. Hosted setup still requires a human to sign in to Render and Neon, accept their account agreements, enter the database and authentication settings, and confirm the live acceptance checks. Do not treat a successful local setup as evidence that the hosted app is live; record actual host URLs in `DEPLOY.md` only after the services have been created and checked.
+Part B replaces the temporary shared password with GitHub sign-in and server-enforced roles. Hosted setup requires Ruby to register the GitHub application, enter private authentication settings, and confirm live acceptance checks. See `DEPLOY.md` for setting locations, access levels, migrations, and current verification status.
 
 ## Main flows
 

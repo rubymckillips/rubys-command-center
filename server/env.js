@@ -30,10 +30,15 @@ export function serverSecurityOptionsFromEnvironment(environment = process.env) 
   };
   const frontendOrigin = environment.FRONTEND_ORIGIN || (environment.NODE_ENV === 'production' ? undefined : 'http://localhost:5173');
   const commit = environment.RENDER_GIT_COMMIT;
+  const oauth = {
+    clientId:environment.GITHUB_CLIENT_ID,clientSecret:environment.GITHUB_CLIENT_SECRET,
+    redirectUri:environment.GITHUB_REDIRECT_URI,ownerGithubId:environment.OWNER_GITHUB_ID,
+    production:environment.NODE_ENV==='production',
+  };
 
   if (environment.NODE_ENV === 'production') {
-    if (!auth.username || auth.username.includes(':') || !auth.password) {
-      throw startupConfigurationError('config_auth', 'CONFIG_AUTH_REQUIRED', 'BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD are required in production');
+    if (!oauth.clientId || !oauth.clientSecret || !/^\d+$/.test(oauth.ownerGithubId??'')) {
+      throw startupConfigurationError('config_auth', 'CONFIG_AUTH_REQUIRED', 'GitHub client ID, client secret, and numeric OWNER_GITHUB_ID are required');
     }
     if (!commit || !/^(?:[\da-f]{40}|[\da-f]{64})$/i.test(commit)) {
       throw startupConfigurationError('config_version', 'CONFIG_VERSION_REQUIRED', 'A full RENDER_GIT_COMMIT is required in production');
@@ -43,8 +48,17 @@ export function serverSecurityOptionsFromEnvironment(environment = process.env) 
   if (frontendOrigin && !isHttpOrigin(frontendOrigin)) {
     throw startupConfigurationError('config_origin', 'CONFIG_ORIGIN_INVALID', 'FRONTEND_ORIGIN must be an HTTP or HTTPS origin');
   }
+  const useOAuth=environment.NODE_ENV==='production'||Boolean(oauth.clientId);
+  if(useOAuth){
+    let callback;
+    try{callback=new URL(oauth.redirectUri);}catch{throw startupConfigurationError('config_auth','CONFIG_AUTH_REQUIRED','GitHub callback URL is required');}
+    if(!oauth.clientSecret||!/^\d+$/.test(oauth.ownerGithubId??'')||callback.origin!==frontendOrigin||callback.pathname!=='/api/auth/github/callback'||callback.search||callback.hash
+      ||(oauth.production&&callback.protocol!=='https:')){
+      throw startupConfigurationError('config_auth','CONFIG_AUTH_REQUIRED','GitHub callback URL must match the frontend origin and /api/auth/github/callback');
+    }
+  }
 
-  return { auth, frontendOrigin, commit };
+  return { auth:useOAuth?undefined:auth, oauth:useOAuth?oauth:undefined, frontendOrigin, commit };
 }
 
 function startupConfigurationError(stage, code, message) {

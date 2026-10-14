@@ -1,12 +1,7 @@
-import {
-  authorizationSnapshot, authorizationHeader, clearCredentials, clearCredentialsIfGeneration,
-  credentialGeneration, setCredentials,
-} from './auth.js';
-
-export { authorizationHeader, clearCredentials, clearCredentialsIfGeneration, credentialGeneration, setCredentials };
-
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
 let unauthorizedHandler;
+let csrfToken;
+let generation=0;
 
 export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = handler;
@@ -22,16 +17,18 @@ function apiUrl(path) {
 
 async function request(path, options = {}) {
   const headers = { 'content-type': 'application/json', ...options.headers };
-  const credentials = authorizationSnapshot();
-  if (credentials.header) headers.Authorization = credentials.header;
+  const requestGeneration=generation;
+  if(csrfToken&&!['GET','HEAD','OPTIONS'].includes(options.method??'GET'))headers['x-csrf-token']=csrfToken;
   let response;
   try {
-    response = await fetch(apiUrl(path), { ...options, headers });
+    response = await fetch(apiUrl(path), { ...options, headers, credentials:'same-origin' });
   } catch {
     throw { code: 'network_error', message: 'The server could not be reached.' };
   }
-  if (response.status === 401) {
-    if (clearCredentialsIfGeneration(credentials.generation)) unauthorizedHandler?.();
+  if (response.status === 401&&requestGeneration===generation) {
+    csrfToken=undefined;
+    generation+=1;
+    unauthorizedHandler?.();
   }
   let payload;
   try { payload = await response.json(); } catch { throw { code: 'invalid_response', message: 'The server returned an invalid response.' }; }
@@ -43,6 +40,16 @@ async function request(path, options = {}) {
 }
 
 export function checkHealth() { return request('/api/health'); }
+export async function session() {
+  const result=await request('/api/auth/session');
+  csrfToken=result.csrfToken;
+  generation+=1;
+  return result;
+}
+export async function logout(){await request('/api/auth/logout',{method:'POST'});csrfToken=undefined;generation+=1;}
+export function githubLoginUrl(){return apiUrl('/api/auth/github');}
+export function listMembers(){return request('/api/admin/members');}
+export function setSuspended(id,suspended){return request(`/api/admin/members/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({suspended})});}
 export function listItems(section) { return request(`/api/items?section=${encodeURIComponent(section)}`); }
 export function listToday() { return request('/api/today'); }
 export function sync(source) {

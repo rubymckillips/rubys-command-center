@@ -4,8 +4,10 @@ import { applyCors } from './cors.js';
 import { isAuthorized } from './auth.js';
 import { createActivityRepository } from './repositories/activity.js';
 import { createItemsRepository } from './repositories/items.js';
+import { createAuthRoutes } from './auth-routes.js';
 
-export function createApp({ pool, connectors, auth, frontendOrigin, commit, logger = (entry) => console.log(JSON.stringify(entry)) } = {}) {
+export function createApp({ pool, connectors, auth, oauth, frontendOrigin, commit, logger = (entry) => console.log(JSON.stringify(entry)) } = {}) {
+  const authentication=oauth?createAuthRoutes({pool,oauth,frontendOrigin}):null;
   const activityRepository = pool ? createActivityRepository(pool) : null;
   const itemsRepository = pool ? createItemsRepository(pool, activityRepository) : null;
 
@@ -31,11 +33,15 @@ export function createApp({ pool, connectors, auth, frontendOrigin, commit, logg
         return;
       }
 
-      if (!isAuthorized(request.headers.authorization, auth)) {
-        response.setHeader('WWW-Authenticate', 'Basic realm="PS3", charset="UTF-8"');
+      if(authentication&&await authentication.handle(request,response,requestUrl))return;
+      const session=authentication?await authentication.authenticate(request):null;
+      if (authentication ? !session : !isAuthorized(request.headers.authorization, auth)) {
+        if(!authentication)response.setHeader('WWW-Authenticate', 'Basic realm="PS3", charset="UTF-8"');
         sendError(response, 401, 'unauthorized', 'Authentication required');
         return;
       }
+
+      if(authentication&&!['GET','HEAD','OPTIONS'].includes(request.method)&&!authentication.validateMutation(request,response,session))return;
 
       if (pathname === '/api/health' && request.method === 'GET') {
         sendJson(response, 200, { ok: true });
@@ -47,7 +53,9 @@ export function createApp({ pool, connectors, auth, frontendOrigin, commit, logg
           sendError(response, 503, 'unavailable', 'The database is not configured');
           return;
         }
-        await handleApiRequest(request, response, requestUrl, itemsRepository, activityRepository, connectors);
+        const scopedActivity=session?createActivityRepository(pool,session.user.id):activityRepository;
+        const scopedItems=session?createItemsRepository(pool,scopedActivity,session.user.id):itemsRepository;
+        await handleApiRequest(request, response, requestUrl, scopedItems, scopedActivity, connectors);
         return;
       }
 
